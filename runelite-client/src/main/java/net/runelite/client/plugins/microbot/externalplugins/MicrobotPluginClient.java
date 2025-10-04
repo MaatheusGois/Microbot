@@ -68,6 +68,7 @@ public class MicrobotPluginClient
         // Check if we should load from local folder
         if (LOCAL_PLUGIN_FOLDER != null && !LOCAL_PLUGIN_FOLDER.trim().isEmpty())
         {
+            log.info("Loading plugins from local folder: {}", LOCAL_PLUGIN_FOLDER);
             return loadLocalManifest();
         }
 
@@ -102,6 +103,7 @@ public class MicrobotPluginClient
     private List<MicrobotPluginManifest> loadLocalManifest() throws IOException
     {
         File manifestFile = new File(LOCAL_PLUGIN_FOLDER, PLUGINS_JSON_PATH);
+        log.info("Looking for local manifest at: {}", manifestFile.getAbsolutePath());
         
         if (!manifestFile.exists())
         {
@@ -111,7 +113,9 @@ public class MicrobotPluginClient
         try
         {
             String manifestContent = Files.readString(manifestFile.toPath());
-            return gson.fromJson(manifestContent, new TypeToken<List<MicrobotPluginManifest>>(){}.getType());
+            List<MicrobotPluginManifest> manifests = gson.fromJson(manifestContent, new TypeToken<List<MicrobotPluginManifest>>(){}.getType());
+            log.info("Successfully loaded {} plugin manifests from local folder", manifests.size());
+            return manifests;
         }
         catch (JsonSyntaxException ex)
         {
@@ -189,18 +193,49 @@ public class MicrobotPluginClient
      */
     public HttpUrl getJarURL(MicrobotPluginManifest manifest)
     {
-        // If using local plugins, construct file path
-        if (LOCAL_PLUGIN_FOLDER != null && !LOCAL_PLUGIN_FOLDER.trim().isEmpty())
+        String manifestUrl = manifest.getUrl();
+        
+        // Check if manifest URL is already a local file path (not an HTTP URL)
+        if (manifestUrl != null && !manifestUrl.startsWith("http"))
         {
-            File jarFile = new File(LOCAL_PLUGIN_FOLDER, manifest.getInternalName() + ".jar");
+            File jarFile = new File(manifestUrl);
+            log.info("Manifest URL is local path for plugin {}: {} (exists: {})", 
+                manifest.getInternalName(), jarFile.getAbsolutePath(), jarFile.exists());
             
             if (jarFile.exists())
             {
-                return HttpUrl.parse(jarFile.toURI().toString());
+                String fileUri = jarFile.toURI().toString();
+                HttpUrl httpUrl = HttpUrl.parse(fileUri);
+                log.info("Using local JAR from manifest - URI: {}", fileUri);
+                return httpUrl;
+            }
+            else
+            {
+                log.error("Local JAR specified in manifest not found for plugin {}: {}", 
+                    manifest.getInternalName(), jarFile.getAbsolutePath());
+                return null;
             }
         }
         
-        return HttpUrl.parse(manifest.getUrl());
+        // If using local plugins folder, try to find JAR there by internalName
+        if (LOCAL_PLUGIN_FOLDER != null && !LOCAL_PLUGIN_FOLDER.trim().isEmpty())
+        {
+            File jarFile = new File(LOCAL_PLUGIN_FOLDER, manifest.getInternalName() + ".jar");
+            log.info("Checking for local JAR by name: {} (exists: {})", jarFile.getAbsolutePath(), jarFile.exists());
+            
+            if (jarFile.exists())
+            {
+                String fileUri = jarFile.toURI().toString();
+                HttpUrl httpUrl = HttpUrl.parse(fileUri);
+                log.info("Local JAR found in folder - URI: {}", fileUri);
+                return httpUrl;
+            }
+        }
+        
+        // Fall back to remote URL from manifest
+        HttpUrl httpUrl = HttpUrl.parse(manifestUrl);
+        log.info("Using remote manifest URL for plugin {}: {}", manifest.getInternalName(), manifestUrl);
+        return httpUrl;
     }
 
     /**
