@@ -62,6 +62,7 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.file.StandardCopyOption;
 import java.lang.reflect.InvocationTargetException;
 import java.net.Proxy;
 import java.net.ProxySelector;
@@ -886,8 +887,18 @@ public class MicrobotPluginManager {
             File pluginFile = getPluginJarFile(internalName);
 
             HttpUrl jarUrl = microbotPluginClient.getJarURL(manifest);
-            if (jarUrl == null || !jarUrl.isHttps()) {
+            if (jarUrl == null) {
                 log.error("Invalid JAR URL for plugin {}", internalName);
+                return false;
+            }
+
+            // Handle local file URLs
+            if (jarUrl.scheme().equals("file")) {
+                return copyLocalPlugin(internalName, jarUrl);
+            }
+
+            if (!jarUrl.isHttps()) {
+                log.error("Invalid JAR URL for plugin {}: must be HTTPS", internalName);
                 return false;
             }
 
@@ -911,6 +922,38 @@ public class MicrobotPluginManager {
 
         } catch (Exception e) {
             log.error("Failed to download plugin {}", internalName, e);
+
+            File pluginFile = getPluginJarFile(internalName);
+            if (pluginFile.exists() && !pluginFile.delete()) {
+                log.warn("Failed to delete corrupted plugin file: {}", pluginFile.getAbsolutePath());
+            }
+            return false;
+        }
+    }
+
+    /**
+     * Copies a plugin JAR file from local file system.
+     *
+     * @param internalName the internal name of the plugin to copy
+     * @param fileUrl the file:// URL of the source JAR
+     * @return true if the plugin was successfully copied, false otherwise
+     */
+    private boolean copyLocalPlugin(String internalName, HttpUrl fileUrl) {
+        try {
+            File sourceFile = new File(java.net.URI.create(fileUrl.toString()));
+            File pluginFile = getPluginJarFile(internalName);
+
+            if (!sourceFile.exists()) {
+                log.error("Local plugin file does not exist: {}", sourceFile.getAbsolutePath());
+                return false;
+            }
+
+            java.nio.file.Files.copy(sourceFile.toPath(), pluginFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+            log.info("Plugin {} copied from {} to {}", internalName, sourceFile.getAbsolutePath(), pluginFile.getAbsolutePath());
+            return true;
+
+        } catch (Exception e) {
+            log.error("Failed to copy local plugin {}", internalName, e);
 
             File pluginFile = getPluginJarFile(internalName);
             if (pluginFile.exists() && !pluginFile.delete()) {
